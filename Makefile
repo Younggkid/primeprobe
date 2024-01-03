@@ -11,7 +11,7 @@ INCLUDES=
 LDFLAGS=
 LDLIBS=-lm 
 #CFLAGS=-O2 -g -D_FILE_OFFSET_BITS=64 -std=gnu99 -Wall
-CFLAGS=${INCLUDES} -g -std=gnu99
+CFLAGS=${INCLUDES} -g -std=gnu99 
 
 
 
