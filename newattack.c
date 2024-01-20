@@ -109,7 +109,7 @@ void setupMapping() {
 
     if (fraction_of_physical_memory < 0.01)
         mapping_size = 2048 * 1024 * 1024u;
-	  mapping_size = 2048*1024*1024u;
+	  mapping_size = 1024*1024*1024u;
 	//int fd = open("/dev/simple", O_RDWR); 
 	//mapping = (pointer *)mmap((void *)RAW_DATA_OFFSET, RAW_DATA_SIZE, PROT_READ | PROT_WRITE, MAP_FILE | MAP_SHARED, fd, 4096);
   /* add by lcy*/
@@ -315,6 +315,11 @@ size_t getslicesmapping(uint64_t phys_addr)
 size_t getcacheset(uint64_t phys_addr)
 {
 	return ( (phys_addr >> 6) & 0x1fff);   // bit 6~18 for a cache set
+}
+
+size_t getcacheset_L2(uint64_t phys_addr)
+{
+	return ( (phys_addr >> 6) & 0x3ff);   // bit 6~18 for a cache set
 }
 
 primelist_t initList() 
@@ -627,10 +632,10 @@ unsigned long __attribute__ ((noinline)) candi_access(void* p) {
     "  xorl %%edi, %%edi	\n"
     //"  xorq %%rdx, %%rdx	\n"
     "  mfence                   \n"
-    "  lfence                   \n"
     "  rdtscp			\n"
     "  movl %%eax, %%esi	\n"
-    "  movq (%1), %1		\n"
+    "  lfence                   \n"
+    "  movq (%1), %%rdx		\n"
     "  lfence         \n"
     "  rdtscp			\n"
     "  subl %%esi, %%eax	\n"
@@ -640,8 +645,29 @@ unsigned long __attribute__ ((noinline)) candi_access(void* p) {
     //"  jle LL			\n"
     "  movl %%edi, %0		\n"
       :"=a" (l)
-      :"b" (p)
-      :"%edx","%esi", "%rdi", "%ecx");
+      :"b" (p));
+  
+  return l;
+}
+
+unsigned long __attribute__ ((noinline)) empty_access() {
+  volatile int l = 0;
+    asm __volatile__ (
+    "  xorl %%edi, %%edi	\n"
+    //"  xorq %%rdx, %%rdx	\n"
+    "  mfence                   \n"
+    "  rdtscp			\n"
+    "  movl %%eax, %%esi	\n"
+    "  lfence                   \n"
+    "  lfence         \n"
+    "  rdtscp			\n"
+    "  subl %%esi, %%eax	\n"
+    "  addl %%eax, %%edi  \n"
+    //"  incl %%edi		\n"
+    //"  cmpl $12, %%edi		\n" //jump if edi < first num
+    //"  jle LL			\n"
+    "  movl %%edi, %0		\n"
+      :"=a" (l));
   
   return l;
 }
@@ -693,9 +719,102 @@ int match(char *buf, int len, char *pattern) {
   }
   return rv;
 }
+void PRB(primelist_t prime_B,primelist_t probe_B) {
+  for(int i=0;i<10;++i) {
+     prime(prime_B);
+     prime(prime_B);
+     probe(probe_B);
+  }
+}
+/*
+int PRA(primelist_t listA,int n, primelist_t prime_B,primelist_t probe_B) {
+  int counter = 0;
+  primelist_t candidate1;
+  primelist_t candidate2;
+  primelist_t prime_listA = listA;
+  primelist_t probe_listA = listA;
+  
+  for(int j=0;j<1;++j) {
+    //printf("hhh\n");
+    probe_listA = listA;
+    prime_listA = listA;
+    while(probe_listA->prime != NULL) {probe_listA = probe_listA->prime;}
+    //printlist(prime_listA);
+    //printprobelist(probe_listA);
+    PRB(prime_B,probe_B);
+    while (prime_listA!=NULL) {
+      if(counter == n) {
+      candidate1 = prime_listA;
+      counter++;
+      //printf("counter is %d\n",counter);
+      
+    }
+    else {
+      
+      int time = candi_access((void*)prime_listA);
+      //printf("prime time is %d\n",time);
+      counter++;
+    }
+    prime_listA = prime_listA->prime;
+    }//probe
+  counter = 0;
+  while (probe_listA!=NULL) {
+    if(counter == 4-n) {
+    candidate2 = probe_listA;
+    counter++;
+    //printf("counter is %d\n",counter);
+    
+  }
+  else {
+    
+    int time = candi_access((void*)probe_listA);
+    printf("probe time is %d\n",time);
+    counter++;
+    
+  }
+  probe_listA = probe_listA->probe;
+  }
+  
+  }
+  PRB(prime_B,probe_B);
+  int time1 = candi_access((void*)candidate1);
+  
+  //printf("access %p\n",candidate1);
+  //printf("access %p\n",candidate2);
+
+  return time1;
+  
+}
+*/
+int PRA(primelist_t listA,primelist_t prime_B,primelist_t probe_B) {
+  primelist_t prime_listA = listA;
+  //primelist_t probe_listA = listA;
+  
+    
+    //probe_listA = listA;
+    //prime_listA = listA;
+    //while(probe_listA->prime != NULL) {probe_listA = probe_listA->prime;}
+    //printlist(prime_listA);
+    //printprobelist(probe_listA);
+    int time;
+    while (prime_listA!=NULL) {
+      PRB(prime_B,probe_B);
+      time = candi_access((void*)prime_listA);
+      prime_listA = prime_listA->prime;
+      //printf("prime time is %d\n",time);
+    }
+    
+  
+  //printf("access %p\n",candidate1);
+  //printf("access %p\n",candidate2);
+
+  return time;
+  
+}
 
 // ----------------------------------------------
 int main(int c, char **v) {
+  long long start_whole = rdtsc_begin();
     int ch;
 	int mulComponents = 0;
 	char *outname = NULL;
@@ -706,7 +825,7 @@ int main(int c, char **v) {
 	int offsets[64];
 	int noffsets = 64;
 	int mulscans = 8;
-    
+
     while ((ch = getopt(c, v, "n:f:a:c:p:o:qs:m")) != -1) {
     switch(ch) {
       case 'a': targetphyaddr = strtol(optarg, NULL, 0); break;
@@ -761,17 +880,29 @@ int main(int c, char **v) {
 	
 	//printf("P:%p -> %zu, %zu\n", targetphyaddr, slice, set);
 	  size_t slice = 1;
-	  size_t set = 0;
+	  size_t setA = 3; //mainly for vec
+    size_t setB = 0x103; //assistant
+    size_t setC = 0x203;
+    size_t setD = 0x303;
     //printf("slice: %zu, set: %zu\n", slice, set);
-	primelist_t primeprobelist = initList();
-//	primelist_t primeprobelist2 = initList();
+    
+	primelist_t primeprobelistA = initList();
+  primelist_t primeprobelistB = initList();
+  primelist_t primeprobelistC = initList();
+  primelist_t primeprobelistD = initList();
 	//printf("init prime list finished.\n");
-	int count = 0;
+	int countA = 0;
+  int countB = 0;
+  int countC = 0;
+  int countD = 0;
 	
-	vector<uint64_t> myvector;
+	vector<uint64_t> myvectorA;
+  vector<uint64_t> myvectorB;
+  vector<uint64_t> myvectorC;
+  vector<uint64_t> myvectorD;
 	bool is_cand_sel = 0;
   pointer candidate = 0;
-	for (size_t i = 0; i < mapping_size; i += 64)
+  /*for (size_t i = 0; i < mapping_size; i += 64)
 	{
 		//printf("i: %lld\n",i);
     pointer phy_addr = getPhysicalAddr((uint64_t)((uint8_t *)mapping + i));
@@ -796,55 +927,202 @@ int main(int c, char **v) {
 			
 			if(count >= 64) break;
 		}
+	}*/
+
+	for (size_t i = 0; i < mapping_size; i += 64)
+	{
+		//printf("i: %lld\n",i);
+    pointer phy_addr = getPhysicalAddr((uint64_t)((uint8_t *)mapping + i));
+    //if( getPhysicalAddr((uint64_t)((uint8_t *)mapping + i)) >> 32 ) continue;
+		if ( getcacheset_L2(phy_addr) == setA  )   //  
+		{ 
+      if (countA == 7) {
+        candidate = (uint64_t)((uint8_t *)mapping + i);
+        //printf("P: %p\n",candidate);
+        countA++;
+        is_cand_sel = 1;
+      }
+      else {
+        myvectorA.push_back((uint64_t)((uint8_t *)mapping + i));
+			  countA++;
+      }
+      
+      //printf("P: %p, set: %ld\n",phy_addr, getcacheset(phy_addr));
+			//insert(primeprobelist, (uint64_t)(mapping + i));
+			
+			
+			if(countA >= 64) break;
+		}
+    else if ( getcacheset_L2(phy_addr) == setB  )   //  
+		{ 
+      
+        myvectorB.push_back((uint64_t)((uint8_t *)mapping + i));
+			  countB++;
+      
+      
+      //printf("P: %p, set: %ld\n",phy_addr, getcacheset(phy_addr));
+			//insert(primeprobelist, (uint64_t)(mapping + i));
+			
+			
+			if(countB >= 64) break;
+		}
+        else if ( getcacheset_L2(phy_addr) == setC  )   //  
+		{ 
+      
+        myvectorC.push_back((uint64_t)((uint8_t *)mapping + i));
+			  countC++;
+      
+      
+      //printf("P: %p, set: %ld\n",phy_addr, getcacheset(phy_addr));
+			//insert(primeprobelist, (uint64_t)(mapping + i));
+			
+			
+			if(countC >= 64) break;
+		}
+            else if ( getcacheset_L2(phy_addr) == setD  )   //  
+		{ 
+      
+        myvectorD.push_back((uint64_t)((uint8_t *)mapping + i));
+			  countD++;
+      
+      
+      //printf("P: %p, set: %ld\n",phy_addr, getcacheset(phy_addr));
+			//insert(primeprobelist, (uint64_t)(mapping + i));
+			
+			
+			if(countD >= 64) break;
+		}
+
 	}
   
-	random_shuffle ( myvector.begin(), myvector.end() );
+	random_shuffle ( myvectorA.begin(), myvectorA.end() );
+  random_shuffle ( myvectorB.begin(), myvectorB.end() );
+  random_shuffle ( myvectorC.begin(), myvectorC.end() );
+  random_shuffle ( myvectorD.begin(), myvectorD.end() );
 	
-	count = 0;
-	for (vector<uint64_t>::iterator it=myvector.begin(); it!=myvector.end() && count < 13; ++it, ++count)
+	countA = 0;
+	for (vector<uint64_t>::iterator it=myvectorA.begin(); it!=myvectorA.end() && countA < 7; ++it, ++countA)
 	{
-		insert(primeprobelist, *it);
+		insert(primeprobelistA, *it);
 	}
+  
+  countB = 0;
+	for (vector<uint64_t>::iterator it=myvectorB.begin(); it!=myvectorB.end() && countB < 5; ++it, ++countB)
+	{
+		insert(primeprobelistB, *it);
+	}
+
+    countC = 0;
+	for (vector<uint64_t>::iterator it=myvectorC.begin(); it!=myvectorC.end() && countC < 4; ++it, ++countC)
+	{
+		insert(primeprobelistC, *it);
+	}
+
+  
+
+  //printlist(primeprobelistB);
 	//sleep(1);
-	primelist_t primeLists =  primeprobelist;
-	primelist_t probeLists =  primeprobelist;
+	primelist_t primeListsA =  primeprobelistA;
+	primelist_t probeListsA =  primeprobelistA;
 	
-//	primelist_t primeLists2 =  primeprobelist2;
-//	primelist_t probeLists2 =  primeprobelist2;
+    primelist_t primeListsB =  primeprobelistB;
+	primelist_t probeListsB =  primeprobelistB;
+
+  primelist_t primeListsC =  primeprobelistC;
+	primelist_t probeListsC =  primeprobelistC;
+
+  
+
 	
-	while(probeLists->prime != NULL)
-		probeLists = probeLists->prime;
+  while(probeListsA->prime != NULL)
+		probeListsA = probeListsA->prime;
+
+  while(probeListsB->prime != NULL)
+		probeListsB = probeListsB->prime;
+  
+  while(probeListsC->prime != NULL)
+		probeListsC = probeListsC->prime;
+
+
+  
 //	while(probeLists2->prime != NULL)
 //		probeLists2 = probeLists2->prime;
 	
 	//printf("Gen prime list finished.\n");
 	//printlist(primeprobelist);
-	//printprobelist(probeLists);
+	//printprobelist(probeListsD);
   //printf("Starting\n");
   //printf("warmup here!\n");
   //for(int i=0;i<400;++i) {
     //warmup_llc(primeprobelist);
   //}
-  int first = 0, second = 0, third = 0;
-  first = candi_access((void*)candidate);
-  second = candi_access((void*)candidate);
+  //int first = 0, second = 0, third = 0;
+  //for (int i=0;i<100;++i){
+  //  first = candi_access((void*)candidate);
+  //}
+
+  //second = candi_access((void*)candidate);
+  //printlist(primeprobelistA);
+
+  //candi_access((void*)candidate);
+  //candi_access((void*)candidate);
+  //int time2 = candi_access((void*)primeprobelistA);
+  int time1 = candi_access((void*)candidate);
+  int time4 = candi_access((void*)candidate);
+  //int time2 = candi_access((void*)primeprobelistA);
   
-  for(int i=0;i<10000;++i) {
-     prime(primeLists);
-     prime(primeLists);
-     probe(probeLists);
-  }
+    //for(int i=0;i<100;++i)
+  //{   
+      //prime(primeListsB);
+      prime(primeListsA);
+      //prime(primeListsC);
+      //prime(primeListsB);
+      //prime(primeListsC);
+      
+      
+      prime(primeListsA);
+      probe(probeListsA);
+      //probe(probeListsB);
+      //probe(probeListsC);
+      //probe(probeListsB);
+
+  //}
+  //candi_access((void*)candidate);
+  
+
+
+  
+  int time2 = candi_access((void*)candidate);
+  int time3 = empty_access();  //prime(primeListsA);
+  //int time5 = PRA(primeprobelistA,primeListsB,probeListsB);
+  //PRB(primeListsB,probeListsB);
+  //int time3 = candi_access((void*)candidate);
+  //int time4 = candi_access((void*)primeListsA);
+  //time4 = candi_access((void*)primeListsA);
+  //int time1 = PRA(primeprobelistA,0,primeListsB,probeListsB);
+  //int time2 = PRA(primeprobelistA,1,primeListsB,probeListsB);
+  //int time3 = PRA(primeprobelistA,2,primeListsB,probeListsB);
+  //int time4 = PRA(primeprobelistA,3,primeListsB,probeListsB);
+  
+  //if(time5>22 && time1>22 && time2>22 && time3>22)printf("%d",time4);
+  //printf("After prime: %d\n",time2-time3);
+  //printf("Before prime: %d\n", time4-time3);
+  printf("%d",time2-time3);
+  
+
+
+
   
   //flush((void*)candidate);
   //printf("warmup finished!\n");
 	//int time_cost = access_time(primeprobelist);
   //int time_cost = access_time(primeprobelist);
-  third = candi_access((void*)candidate);
+  //third = candi_access((void*)candidate);
   //printf("The first access time is %d\n",first);
   //printf("The second access time is %d\n",second);
   //printf("The third access time is %d\n",third);
-  bool verified = (third > 100);
-  printf("%d",third);
+  //bool verified = (third > 100);
+  //printf("%d",third);
 	//printf("Print primelist finished.\n");
   //sleep(3);
   //unsigned long start, end, cost_time[12];
@@ -915,6 +1193,8 @@ int main(int c, char **v) {
  //  		prime(primeLists2);
  //  		prime(primeLists2);
     }*/	
+    long long end_whole = rdtsc_end();
+    //printf("%ld",end_whole -start_whole);
     return 0;
 
 }
